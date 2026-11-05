@@ -11,7 +11,7 @@
 
 ## Overview
 
-UnityScripts contains example components for first-person movement, Rigidbody interactions, ball movement, trigger-based teleportation, and a more substantial physics-based projectile-target game. The scripts are designed as learning resources and starting points for Unity prototypes, coursework experiments, and small games.
+UnityScripts contains example components for first-person movement, Rigidbody interactions, ball movement, trigger-based teleportation, procedural maze generation, runtime object placement, impact-driven mesh deformation, and a more substantial physics-based projectile-target game. The scripts are designed as learning resources and starting points for Unity prototypes, coursework experiments, and small games.
 
 **What's included**
 
@@ -19,6 +19,9 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 - **Gravity gun:** raycast pickup, physics-based holding, distance adjustment, rotation, and charged throws.
 - **Rigidbody ball movement:** simple WASD force controls and a Shift modifier.
 - **Portal-style teleporting:** a trigger-based ball teleportation experiment.
+- **Procedural mazes:** seeded, fully connected 3D mazes generated at runtime, with colliders, path preview, and completion callbacks.
+- **Runtime construction:** grid snapping, ghost previews, rotation, obstruction checks, placement/removal, and undo/redo.
+- **Impact deformation:** collision dents and scripted impacts on readable meshes, with optional elastic recovery and collider updates.
 - **Projectile game:** two alternative launcher controllers, charge-to-fire aiming, trajectory visualization, target/obstacle spawning, a shot counter, and win/lose state management.
 
 ## Repository contents
@@ -27,7 +30,10 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 UnityScripts/
 ├── AdvancedGravityGun.cs
 ├── Balltoredportal.cs
+├── PhysicsImpactDeformer.cs
 ├── PlayerController.cs
+├── ProceduralMazeGenerator_Unity.cs
+├── RuntimeBuildingSystem.cs
 ├── WASD-withshift-ballmovement.cs
 ├── projectileballgame/
 │   ├── Aim.cs
@@ -47,6 +53,9 @@ UnityScripts/
 | --- | --- | --- |
 | [`AdvancedGravityGun.cs`](AdvancedGravityGun.cs) | `AdvancedGravityGun` | Grab, hold, rotate, and throw non-kinematic Rigidbodies using a physics controller. |
 | [`PlayerController.cs`](PlayerController.cs) | `SimpleFPSController` | CharacterController-based first-person movement, sprinting, jumping, and mouse look. |
+| [`ProceduralMazeGenerator_Unity.cs`](ProceduralMazeGenerator_Unity.cs) | `ProceduralMazeGenerator` | Generate deterministic, connected mazes with solid walls/floors, optional shortest-path visualization, and a completion event. |
+| [`RuntimeBuildingSystem.cs`](RuntimeBuildingSystem.cs) | `RuntimeBuildingSystem` | Place and remove pieces at runtime with previews, snapping, rotation, obstruction checks, and undo/redo. |
+| [`PhysicsImpactDeformer.cs`](PhysicsImpactDeformer.cs) | `PhysicsImpactDeformer` | Deform readable meshes from physics contacts or direct impacts, with optional recovery and MeshCollider refresh. |
 | [`WASD-withshift-ballmovement.cs`](WASD-withshift-ballmovement.cs) | `Ballmovement` | Basic Rigidbody force movement using WASD, with experimental Shift behaviour. |
 | [`Balltoredportal.cs`](Balltoredportal.cs) | `TeleportBall` | Teleport a ball to an assigned destination when it enters a trigger; requires a code fix (see below). |
 | [`projectileballgame/Aim.cs`](projectileballgame/Aim.cs) | `AimController_EvenMore_Human` | Charge and release projectile shots; aim using mouse or keyboard. |
@@ -59,9 +68,10 @@ UnityScripts/
 
 - A Unity Editor installation with 3D physics support. **Unity 2022.3 LTS or Unity 6** is a reasonable starting point, but no specific Unity version has been verified against the complete collection.
 - C# scripting enabled (standard in Unity).
-- The **legacy Input Manager** enabled, or **Active Input Handling** set to **Both** (`Edit > Project Settings > Player > Other Settings`) because the scripts use `UnityEngine.Input` (`GetAxis`, `GetKey`, `GetMouseButton`, etc.). Input System-only projects need adaptation.
+- For scripts that use `UnityEngine.Input`, enable **Input Manager (Old)** or set **Active Input Handling** to **Both** (`Edit > Project Settings > Player > Other Settings`). In particular, `RuntimeBuildingSystem` and the older controllers require legacy input. `ProceduralMazeGenerator` supports legacy input and, when the Input System package is installed/enabled, its `R`/`H` keyboard shortcuts also support the new Input System. The optional middle-click demo in `PhysicsImpactDeformer` requires legacy input; collision-driven deformation and its public API do not.
 - **TextMeshPro** for `projectileballgame/GameManager.cs` and `LauncherController.cs` (`using TMPro;`). Install it through Package Manager if necessary and import its essential resources when prompted.
-- An appropriately configured Unity scene: cameras, collision geometry, components, prefabs, Inspector references, and tags are **not** supplied in this repository.
+- An appropriately configured Unity scene for most examples: cameras, collision geometry, components, prefabs, Inspector references, and tags are **not** supplied in this repository. The maze generator creates its own geometry; the building system can create three demonstration pieces if no prefabs are assigned.
+- For `PhysicsImpactDeformer`, a mesh with **Read/Write Enabled** (on imported model assets), sufficient vertex density for visible dents, and a Collider for collision-driven use.
 
 ## Installation
 
@@ -82,6 +92,7 @@ UnityScripts/
    | `WASD-withshift-ballmovement.cs` | `Ballmovement.cs` |
    | `projectileballgame/Aim.cs` | `AimController_EvenMore_Human.cs` |
    | `projectileballgame/Trajectory.cs` | `TrajectoryLine.cs` |
+   | `ProceduralMazeGenerator_Unity.cs` | `ProceduralMazeGenerator.cs` |
 
 5. Let Unity compile the scripts. If you imported the whole repository, address the [`Aim.cs` private-field compile error](#known-issues-and-limitations) first.
 6. Add the desired component(s) to suitable GameObjects and assign the Inspector references. Follow the setups below.
@@ -140,6 +151,64 @@ The intended setup is a portal/trigger Collider with **Is Trigger** enabled, plu
 
 **Important:** `TeleportBall` currently stores the Rigidbody from the GameObject hosting the portal script, rather than from the entering ball. Attaching it to a trigger portal without a Rigidbody on that same GameObject causes a null-reference error when teleporting. Update the teleport method to obtain the entering ball's Rigidbody (for example, via `ball.GetComponent<Rigidbody>()`) before use. The extra `OnTriggerEnter(BoxCollider)` overload is unnecessary; Unity invokes the standard `OnTriggerEnter(Collider)` message.
 
+### 5. Procedural 3D maze (`ProceduralMazeGenerator`)
+
+[Source](ProceduralMazeGenerator_Unity.cs) — a self-contained maze generator using an **iterative randomized depth-first search**. It creates a connected maze from a seed, generates floor/wall geometry with Colliders, and computes a shortest route with breadth-first search.
+
+1. Copy `ProceduralMazeGenerator_Unity.cs` into `Assets/Scripts/` and **rename it to `ProceduralMazeGenerator.cs`**.
+2. Add `ProceduralMazeGenerator` to an empty GameObject.
+3. Optionally assign a player Transform (for example, the object with `SimpleFPSController`) to **Player**. If assigned, the generator moves it to the start on generation and checks whether it reaches the exit.
+4. Set `mazeWidth`, `mazeDepth`, `cellSize`, and `seed` in the Inspector. The size ranges from **2×2 to 40×40 cells**.
+5. Press **Play**. With `generateOnStart` enabled, the maze appears automatically. The orange marker denotes the exit.
+
+| Input | Behaviour |
+| --- | --- |
+| `R` | Regenerate the maze (same layout if the seed remains fixed) |
+| `H` | Toggle visualization of the shortest route |
+
+Turn on `randomizeSeedOnGenerate` for new layouts each time. The `onMazeCompleted` UnityEvent is invoked when the **assigned player** reaches the exit; if Player is unassigned, only the maze/markers and route preview operate. You can also invoke `Generate()`, `ToggleSolution()`, or `GetStartWorldPosition()` from other scripts. The generator creates **runtime primitives**, not serialized scene assets or a NavMesh; larger mazes can create many GameObjects and Colliders.
+
+### 6. Runtime construction (`RuntimeBuildingSystem`)
+
+[Source](RuntimeBuildingSystem.cs) — an in-game placement prototype with a ghost preview, optional grid snapping, rotation steps, overlap checks, and undo/redo.
+
+1. Add `RuntimeBuildingSystem` to an empty GameObject.
+2. Assign **Build Camera**, or ensure your active camera is tagged **MainCamera**.
+3. Leave `placeablePrefabs` empty to use the three automatically created example pieces: **wall, platform, pillar**. Alternatively, supply your own prefab array (including renderers, and preferably Colliders for placed-object selection and obstruction checks).
+4. Use a floor with a Collider in the `placementSurfaces` layer mask, or keep `allowFallbackGroundPlane` enabled for placement on a virtual horizontal plane.
+5. Press **Play**. The builder enters build mode by default and displays an on-screen status panel.
+
+| Input | Behaviour |
+| --- | --- |
+| `B` | Toggle build mode |
+| `1`–`9` / mouse wheel | Choose an available building piece |
+| `Q` / `E` | Rotate the preview by `rotationStep` |
+| `G` | Toggle grid snapping |
+| Left mouse button | Place the selected piece when the preview is valid |
+| Right mouse button | Remove the first hit placed piece |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo a placement or removal |
+
+The preview uses the camera centre when the cursor is locked, otherwise the mouse position. Configure `gridSize`, `maxBuildDistance`, `placementSurfaces`, `obstructionLayers`, and `checkForObstructions` in the Inspector. An exposed API includes `SetBuildMode(bool)`, `Undo()`, `Redo()`, and `ClearAllBuildings()`. This is an **in-memory runtime prototype**: it does not save structures across Play sessions, and it uses the **legacy Input Manager**.
+
+### 7. Physics impact deformation (`PhysicsImpactDeformer`)
+
+[Source](PhysicsImpactDeformer.cs) — visually deform a mesh at collision contact points or from scripted impact positions, and optionally allow dents to recover over time.
+
+1. Create a 3D mesh object with a **MeshFilter**, MeshRenderer, and non-trigger Collider. For imported models, enable **Read/Write** in the Model Import Settings; ensure the mesh has enough vertices for visibly localized deformation.
+2. Attach `PhysicsImpactDeformer` to the same GameObject as the MeshFilter.
+3. Set `minimumImpactSpeed`, `impactRadius`, `maximumVertexDisplacement`, and `collisionStrengthMultiplier` to control denting.
+4. With `deformOnCollisions` enabled, strike the object using another physics object configured to generate collision callbacks (typically a moving Rigidbody). Contacts above the speed threshold cause dents.
+5. For a manual test, tag a camera **MainCamera**, enter Play mode, and **middle-click** the deformable object's collider. This optional test needs the **legacy Input Manager**.
+6. Enable `enableRecovery` for gradual return to the original mesh, or invoke `RepairImmediately()` to restore the shape immediately.
+
+The public API also exposes `ApplyImpact(worldPosition, inwardWorldDirection, strength)`, which returns whether any vertices changed. For a surface raycast hit, the inward direction is normally `-hit.normal`. Strength is a **world-space displacement**, not an impulse magnitude.
+
+By default, the script deforms **only the visual mesh**. `updateMeshCollider` can optionally synchronize a matching MeshCollider at a throttled interval, but collider recooking is expensive and Unity has restrictions on non-convex MeshColliders attached to dynamic Rigidbodies. Use this feature cautiously on static/environment geometry. The source asset is not modified: the component clones the mesh at runtime.
+
+### Combining components
+
+These components are independent demos, not a unified input framework. Some default keys overlap: `R` regenerates the maze but rotates a held gravity-gun object; `Q`/`E` control building rotation while `Q` also rotates gravity-gun objects and `E` is gravity-gun pickup. Disable/remap conflicting controls or only enable the relevant component while testing. Both the maze and building system use on-screen IMGUI panels in the top-left, which may overlap if enabled together.
+
 ## Projectile ball game
 
 The [`projectileballgame/`](projectileballgame/) folder is a multi-component prototype in which players launch balls towards spawned targets. The `GameManager` tracks blue targets, grants extra shots after green-target hits, manages ball lifecycle, and displays win/lose UI. The scripts are **not fully integrated in their current state**; see the issues below before attempting a full scene build.
@@ -197,7 +266,7 @@ The game starts with **10 shots** by default. It attempts to spawn **12 blue tar
 This repository is suitable for experimentation, but not all scripts are production-ready:
 
 1. **`Aim.cs` currently fails to compile when `GameManager.cs` is present.** It accesses `GameManager`'s private fields `is_Ball_Currently_Active_Internal`, `is_Game_Over_Internal`, and `current_Shots_Left_Internal` in a diagnostic `Debug.Log` expression. Remove those private-field references from that log or expose appropriate public read-only properties. The existing public `Query_IsPlayerAllowedToFireAShot()` method already provides the required permission check.
-2. **Five script filenames do not match their MonoBehaviour class names.** Use the rename table in [Installation](#installation) before attaching those scripts in Unity.
+2. **Six script filenames do not match their MonoBehaviour class names.** Use the rename table in [Installation](#installation) before attaching those scripts in Unity.
 3. **The two projectile launchers use incompatible spawning assumptions.** `LauncherController` acts on a ball pre-created by `GameManager`, while `AimController_EvenMore_Human` instantiates a new ball. Use one launcher approach and adapt GameManager's ball lifecycle accordingly.
 4. **`TeleportBall` references the wrong Rigidbody for typical portal setups.** It should operate on the incoming ball's Rigidbody; otherwise, runtime errors may occur.
 5. **Trajectory prediction is approximate.** `TrajectoryLine` uses a simple ballistic formula and currently assumes launch force corresponds to initial velocity; mass, collisions, aerodynamic drag, and other forces are not simulated in the preview.
@@ -205,6 +274,10 @@ This repository is suitable for experimentation, but not all scripts are product
 7. **Ball lifetime starts as soon as the ball prefab is created.** The GameManager's waiting/kinematic ball can time out before being fired. The controller should ideally start its lifetime when launched.
 8. **End-screen keyboard handling is limited.** `GameManager.Update()` returns early when the game is over, so its `R` restart and `Escape` quit shortcuts are inactive at that stage. Connect end-screen UI Buttons to `MyAction_RestartLevel()` / `MyAction_QuitGame()` or adjust the input ordering.
 9. **This repository does not contain a Unity project, test suite, sample scene, or package manifest.** Functionality depends on configuring your own scene; compatibility and behaviour have not been verified end-to-end.
+10. **Procedural mazes exist only during Play mode.** They are built as runtime primitive GameObjects, and large dimensions (up to 40×40) can cause heavy GameObject, rendering, and physics overhead. No NavMesh or baked scene is generated.
+11. **Runtime building does not persist placed pieces.** Undo/redo history and placements are session-only. It requires legacy input; use appropriate layer masks, Colliders, and a camera for reliable placement and removal.
+12. **Mesh deformation has geometry and physics constraints.** The source mesh must be readable, low-resolution meshes show coarse dents, and visual deformation does not alter collision geometry unless MeshCollider refresh is explicitly enabled. Frequent recooking is performance-intensive.
+13. **Demo controls may conflict.** The maze, building system, gravity gun, and projectile examples reuse some keys. See [Combining components](#combining-components).
 
 Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/UnityScripts/issues).
 
@@ -221,6 +294,12 @@ Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/U
 | **Objects do not spawn** | Assign spawn anchors/prefabs and increase usable space or adjust overlap radius and spawn attempts. |
 | **Gravity gun won't grab an object** | Ensure it has a non-kinematic Rigidbody, appropriate mass, a Collider, and is in the pickup layer/range. |
 | **Teleport causes an exception** | Fix `TeleportBall` so it uses the ball's Rigidbody, not the portal's. |
+| **Maze script can't be attached** | Rename `ProceduralMazeGenerator_Unity.cs` to `ProceduralMazeGenerator.cs`, then check Unity's Console. |
+| **Maze completion never fires** | Assign a **Player** Transform and ensure it reaches the orange exit marker; the callback is position-based, not a trigger. |
+| **Build preview won't place** | Check **Build Camera** / MainCamera, the raycast range, a valid placement surface or fallback plane, obstruction masks, and the preview colour. |
+| **Runtime builder input fails** | Enable **Input Manager (Old)** or **Both**; `RuntimeBuildingSystem` uses `UnityEngine.Input`. |
+| **Deformer stays flat or disables itself** | Check **Read/Write Enabled** on an imported mesh, enough mesh subdivisions, collision speed above the threshold, and a non-trigger Collider. |
+| **Collision shape doesn't match a dent** | Visual changes are separate from physics by default. Add a matching MeshCollider and enable `updateMeshCollider` only if its performance/physics trade-offs are acceptable. |
 
 ## Contributing
 
