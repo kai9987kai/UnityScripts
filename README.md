@@ -24,6 +24,7 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 - **Impact deformation:** collision dents and scripted impacts on readable meshes, with optional elastic recovery and collider updates.
 - **Time and weather:** configurable day/night cycle, overcast lighting, fog, optional wind and precipitation, and storm lightning.
 - **Stealth NPC AI:** NavMesh patrols, sight cones, suspicion accumulation, scripted noise events, pursuit, and searching the last known position.
+- **Prefab pooling:** bounded reusable GameObject pools with prewarming, timed returns, lifecycle callbacks and diagnostics.
 - **Projectile game:** two alternative launcher controllers, charge-to-fire aiming, trajectory visualization, target/obstacle spawning, a shot counter, and win/lose state management.
 
 ## Repository contents
@@ -37,6 +38,7 @@ UnityScripts/
 ├── PlayerController.cs
 ├── ProceduralMazeGenerator_Unity.cs
 ├── RuntimeBuildingSystem.cs
+├── RuntimeObjectPool.cs
 ├── StealthGuardAI.cs
 ├── WASD-withshift-ballmovement.cs
 ├── projectileballgame/
@@ -58,6 +60,7 @@ UnityScripts/
 | [`AdvancedGravityGun.cs`](AdvancedGravityGun.cs) | `AdvancedGravityGun` | Grab, hold, rotate, and throw non-kinematic Rigidbodies using a physics controller. |
 | [`DynamicWorldEnvironment.cs`](DynamicWorldEnvironment.cs) | `DynamicWorldEnvironment` | A day/night clock and five smoothly blended weather presets, with optional ambient/fog, WindZone, rain/snow and lightning effects. |
 | [`StealthGuardAI.cs`](StealthGuardAI.cs) | `StealthGuardAI` | NavMesh-based finite-state patrol, vision, noise-driven investigation, chase, and last-known-position search. |
+| [`RuntimeObjectPool.cs`](RuntimeObjectPool.cs) | `RuntimeObjectPool` | Named, bounded prefab pools with prewarming, expansion, timed return, reset callbacks, and active/available statistics. |
 | [`PlayerController.cs`](PlayerController.cs) | `SimpleFPSController` | CharacterController-based first-person movement, sprinting, jumping, and mouse look. |
 | [`ProceduralMazeGenerator_Unity.cs`](ProceduralMazeGenerator_Unity.cs) | `ProceduralMazeGenerator` | Generate deterministic, connected mazes with solid walls/floors, optional shortest-path visualization, and a completion event. |
 | [`RuntimeBuildingSystem.cs`](RuntimeBuildingSystem.cs) | `RuntimeBuildingSystem` | Place and remove pieces at runtime with previews, snapping, rotation, obstruction checks, and undo/redo. |
@@ -80,6 +83,7 @@ UnityScripts/
 - For `PhysicsImpactDeformer`, a mesh with **Read/Write Enabled** (on imported model assets), sufficient vertex density for visible dents, and a Collider for collision-driven use.
 - For `DynamicWorldEnvironment`, a directional Light is needed for visible sunlight; moonlight, lightning, WindZone, and rain/snow ParticleSystems are optional. The script does not generate particle prefabs, cloud geometry, or a skybox.
 - For `StealthGuardAI`, a guard GameObject with a **NavMeshAgent** standing on a **baked NavMesh**, plus an assigned target and optional patrol point Transforms. Depending on Unity version/project setup, install **AI Navigation** via Package Manager for NavMesh baking. The component uses `UnityEngine.AI`; it needs no separate player controller.
+- For `RuntimeObjectPool`, configure at least one named **Prefab** in the component's **Pool Definitions** list. No other packages or special Unity input settings are required.
 
 ## Installation
 
@@ -297,6 +301,72 @@ Other scripts can call `SetTarget(Transform)`, inspect `CurrentState`, `Suspicio
 
 **Sensor and performance notes:** Sight uses a view angle, maximum distance and a line-of-sight raycast at a configurable interval (`senseInterval`, default **0.15 s**). A blocker must be included in `visionLayers` to obstruct sight. Noise is a distance-based event and **does not model acoustic occlusion**. Guards are registered in a static list for broadcasts, so sending very frequent noise events to many guards may require optimization. The search system samples positions against the baked NavMesh; it does not build or rebake navigation geometry at runtime.
 
+### 10. Runtime prefab pooling (`RuntimeObjectPool`)
+
+[Source](RuntimeObjectPool.cs) — a reusable pool manager for **bullets, projectiles, particle effects, enemies, pickups, and other short-lived objects**. Reusing deactivated GameObjects generally avoids repeated Instantiate/Destroy calls and can reduce allocation spikes.
+
+**Setup**
+
+1. Create a scene GameObject called **Pool Manager**, then attach `RuntimeObjectPool.cs`.
+2. Add at least one item to **Pool Definitions**. Give it a unique ID (for example, `Projectile`), assign a prefab, and set **Prewarm**, **Maximum Instances**, and **Expand When Exhausted**.
+3. Set the prefab's normal active state to **enabled**. The manager creates its initial instances under an inactive staging parent, then stores them inactive until they are rented.
+4. Reference the manager from gameplay scripts via a serialized `RuntimeObjectPool` field. Spawn using the matching pool ID and return objects rather than calling `Destroy()`.
+5. Optionally enable **Show Stats Overlay** to inspect active, available, and total instance counts during Play mode.
+
+**Spawning a projectile**
+
+```csharp
+using UnityEngine;
+
+public sealed class PooledProjectileLauncher : MonoBehaviour
+{
+    [SerializeField] private RuntimeObjectPool pool;
+    [SerializeField] private Transform muzzle;
+    [SerializeField] private float projectileSpeed = 20f;
+
+    public void Fire()
+    {
+        if (pool == null || muzzle == null) return;
+
+        // Returns automatically after 4 seconds unless returned sooner.
+        GameObject projectile = pool.Spawn(
+            "Projectile", muzzle.position, muzzle.rotation, null, 4f);
+        if (projectile == null) return; // Pool exhausted or misconfigured.
+
+        Rigidbody body = projectile.GetComponent<Rigidbody>();
+        if (body != null)
+        {
+#if UNITY_6000_0_OR_NEWER
+            body.linearVelocity = muzzle.forward * projectileSpeed;
+#else
+            body.velocity = muzzle.forward * projectileSpeed;
+#endif
+        }
+    }
+}
+```
+
+The launcher code is a documentation example, **not an additional file**. Put it in `PooledProjectileLauncher.cs` if you want to try it. Configure the pool with an active `Projectile` prefab containing a Collider and Rigidbody; the optional four-second lifetime is measured using scaled `Time.time`.
+
+**Public API**
+
+| Method / property | Use |
+| --- | --- |
+| `Spawn(id, position, rotation, parent, lifetimeSeconds)` | Rent and activate a pooled GameObject; returns `null` if unavailable |
+| `Return(instance)` | Deactivate and recycle a rented object |
+| `ReturnAll(id)` | Return all active instances from one pool |
+| `TryGetStats(id, out active, out available, out total)` | Read pool usage counters |
+| `Initialize()` | Initialize pool definitions (also called automatically in `Awake`) |
+| `PoolCount` | Number of configured, valid pools |
+
+For a projectile that hits something before the lifetime expires, call `pool.Return(gameObject)` from its collision logic. The manager will cancel its pending timed return.
+
+**Resetting pooled behaviours**
+
+Because reuse does **not** create a fresh GameObject or run `Awake` again, a pooled component should explicitly reset variables, physics, timers, and visual effects as necessary. Implement `RuntimeObjectPool.IPoolCallbacks` on any attached MonoBehaviour to receive `OnPoolSpawned()` and `OnPoolReturned()` notifications. The pool caches these interfaces when it creates an instance. Components added dynamically afterward are not automatically included in that cache.
+
+**Limits and caveats:** Pool limits are per ID. When `expandWhenExhausted` is false (or maximum capacity is reached), `Spawn` returns `null` instead of silently stealing an active object. Avoid directly calling `Destroy` on pooled instances; use `Return`. The manager can reclaim capacity from externally destroyed active instances during periodic cleanup. Auto-return and cleanup depend on the manager remaining enabled, and rented instances are destroyed with their owning manager. Do not use object pooling as a drop-in replacement for projectile scripts that rely on `OnDestroy` unless their lifecycle has been adapted.
+
 ### Combining components
 
 These components are independent demos, not a unified input framework. Some default keys overlap: `R` regenerates the maze but rotates a held gravity-gun object; `Q`/`E` control building rotation while `Q` also rotates gravity-gun objects and `E` is gravity-gun pickup. Disable/remap conflicting controls or only enable the relevant component while testing. Both the maze and building system use on-screen IMGUI panels in the top-left, which may overlap if enabled together.
@@ -372,6 +442,7 @@ This repository is suitable for experimentation, but not all scripts are product
 13. **Demo controls may conflict.** The maze, building system, gravity gun, and projectile examples reuse some keys. See [Combining components](#combining-components).
 14. **Weather is not a complete atmosphere simulation.** `DynamicWorldEnvironment` requires supplied particle systems for visible precipitation, and URP/HDRP projects may need pipeline-specific overrides for fog and sky.
 15. **Stealth guard AI requires precomputed navigation.** `StealthGuardAI` cannot navigate without a valid baked NavMesh. Hearing only responds to explicit calls to `HearNoise` or `BroadcastNoise`; sight requires a target reference and sensible physics layer masks. It does not implement attack, animation, cover tactics, or networking.
+16. **Pooled objects require an explicit reset protocol.** `RuntimeObjectPool` reuses existing objects; per-instance velocity, animations, particles, collision state, or custom script state may persist between rentals unless your components reset themselves. Existing scripts that destroy bullets instead of returning them need integration changes.
 
 Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/UnityScripts/issues).
 
@@ -399,6 +470,9 @@ Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/U
 | **Stealth guard doesn't move** | Bake a NavMesh, place the guard on it, ensure its NavMeshAgent is enabled, and assign valid patrol point Transforms. |
 | **Stealth guard sees through walls** | Include obstacle layers in `visionLayers`; vision raycasts ignore objects excluded from that mask. |
 | **Stealth guard never hears footsteps** | Explicitly call `StealthGuardAI.BroadcastNoise(...)` or `HearNoise(...)` from the footstep/impact event; this is not automatic physics audio detection. |
+| **Object pool Spawn returns null** | Check the exact pool ID, assigned prefab, expansion policy and maximum instance count. Check Console warnings for skipped definitions. |
+| **Pooled object reappears with old velocity/effects** | Reset state in a component implementing `RuntimeObjectPool.IPoolCallbacks` when it is spawned or returned. |
+| **Pooled instance never returns** | Call `Return(instance)` or pass a positive `lifetimeSeconds` to `Spawn`. Timed return uses scaled game time and runs only while the manager is enabled. |
 
 ## Contributing
 
