@@ -256,22 +256,22 @@ The component exposes `TimeOfDayHours`, `Sunlight01`, `IsNight`, `TargetWeather`
 
 **Limitations:** This is a lightweight environmental prototype, not a physically based weather simulator. It does **not** generate clouds, thunder audio, particle assets, skybox transitions, or weather-dependent gameplay physics. Fog and ambient effects use Unity's `RenderSettings`; URP/HDRP volume-based workflows may require adaptation. When the component is disabled, its prior global fog/ambient values are restored by default; Light and WindZone values are not restored.
 
-### 9. Stealth guard AI (\`StealthGuardAI\`)
+### 9. Stealth guard AI (`StealthGuardAI`)
 
-[Source](StealthGuardAI.cs) — a single-component NPC controller with a five-state finite-state machine and configurable sensory thresholds. It uses Unity's \`NavMeshAgent\` to move rather than directly adjusting transforms.
+[Source](StealthGuardAI.cs) — a single-component NPC controller with a five-state finite-state machine and configurable sensory thresholds. It uses Unity's `NavMeshAgent` to move rather than directly adjusting transforms.
 
 | State | Behaviour |
 | --- | --- |
-| \`Patrol\` | Walk sequentially between assigned waypoint Transforms |
-| \`Investigate\` | Move toward a reported noise or partially observed target |
-| \`Chase\` | Pursue the target's most recently observed position |
-| \`Search\` | Check randomly sampled, NavMesh-reachable positions around the last known location |
-| \`Return\` | Resume the patrol route after searching |
+| `Patrol` | Walk sequentially between assigned waypoint Transforms |
+| `Investigate` | Move toward a reported noise or partially observed target |
+| `Chase` | Pursue the target's most recently observed position |
+| `Search` | Check randomly sampled, NavMesh-reachable positions around the last known location |
+| `Return` | Resume the patrol route after searching |
 
 **Setup**
 
-1. In a Unity 3D scene, create walkable terrain or a floor and **bake a NavMesh**. In projects that use the AI Navigation package, add/configure a \`NavMeshSurface\` and bake it. Verify the guard starts **on** a navigable surface.
-2. Create an enemy GameObject (a Capsule is sufficient), add a **NavMeshAgent**, then attach \`StealthGuardAI.cs\`.
+1. In a Unity 3D scene, create walkable terrain or a floor and **bake a NavMesh**. In projects that use the AI Navigation package, add/configure a `NavMeshSurface` and bake it. Verify the guard starts **on** a navigable surface.
+2. Create an enemy GameObject (a Capsule is sufficient), add a **NavMeshAgent**, then attach `StealthGuardAI.cs`.
 3. Assign the player's **Transform** to the guard's **Target** field. Give the player a Collider if you want a raycast to confirm that the player is the first hit; the script also allows unobstructed targets without Colliders.
 4. Create several empty GameObjects around the environment and put their Transforms in **Patrol Points**. Leave the array empty to keep the guard stationary until it sees/hears something.
 5. Optionally assign an **Eyes** Transform at head height; otherwise the script offsets the guard's origin using **Eye Height**.
@@ -280,22 +280,22 @@ The component exposes `TimeOfDayHours`, `Sunlight01`, `IsNight`, `TargetWeather`
 
 **Trigger noise from gameplay**
 
-Add the following call to a footstep, thrown-object, or weapon script; loudness \`1f\` means its normal hearing radius, and \`2f\` doubles it:
+Add the following call to a footstep, thrown-object, or weapon script; loudness `1f` means its normal hearing radius, and `2f` doubles it:
 
-\`\`\`csharp
+```csharp
 // Called when a noise should alert nearby guards.
 StealthGuardAI.BroadcastNoise(transform.position, 1f);
-\`\`\`
+```
 
 Or notify a specific guard:
 
-\`\`\`csharp
+```csharp
 guard.HearNoise(impactPoint, 1.5f);
-\`\`\`
+```
 
-Other scripts can call \`SetTarget(Transform)\`, inspect \`CurrentState\`, \`Suspicion01\`, \`CanSeeTarget\` and \`LastKnownPosition\`, or subscribe to the \`StateChanged\` C# event. No player movement or noise is generated automatically.
+Other scripts can call `SetTarget(Transform)`, inspect `CurrentState`, `Suspicion01`, `CanSeeTarget` and `LastKnownPosition`, or subscribe to the `StateChanged` C# event. No player movement or noise is generated automatically.
 
-**Sensor and performance notes:** Sight uses a view angle, maximum distance and a line-of-sight raycast at a configurable interval (\`senseInterval\`, default **0.15 s**). A blocker must be included in \`visionLayers\` to obstruct sight. Noise is a distance-based event and **does not model acoustic occlusion**. Guards are registered in a static list for broadcasts, so sending very frequent noise events to many guards may require optimization. The search system samples positions against the baked NavMesh; it does not build or rebake navigation geometry at runtime.
+**Sensor and performance notes:** Sight uses a view angle, maximum distance and a line-of-sight raycast at a configurable interval (`senseInterval`, default **0.15 s**). A blocker must be included in `visionLayers` to obstruct sight. Noise is a distance-based event and **does not model acoustic occlusion**. Guards are registered in a static list for broadcasts, so sending very frequent noise events to many guards may require optimization. The search system samples positions against the baked NavMesh; it does not build or rebake navigation geometry at runtime.
 
 ### Combining components
 
