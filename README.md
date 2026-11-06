@@ -23,6 +23,7 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 - **Runtime construction:** grid snapping, ghost previews, rotation, obstruction checks, placement/removal, and undo/redo.
 - **Impact deformation:** collision dents and scripted impacts on readable meshes, with optional elastic recovery and collider updates.
 - **Time and weather:** configurable day/night cycle, overcast lighting, fog, optional wind and precipitation, and storm lightning.
+- **Stealth NPC AI:** NavMesh patrols, sight cones, suspicion accumulation, scripted noise events, pursuit, and searching the last known position.
 - **Projectile game:** two alternative launcher controllers, charge-to-fire aiming, trajectory visualization, target/obstacle spawning, a shot counter, and win/lose state management.
 
 ## Repository contents
@@ -36,6 +37,7 @@ UnityScripts/
 ├── PlayerController.cs
 ├── ProceduralMazeGenerator_Unity.cs
 ├── RuntimeBuildingSystem.cs
+├── StealthGuardAI.cs
 ├── WASD-withshift-ballmovement.cs
 ├── projectileballgame/
 │   ├── Aim.cs
@@ -55,6 +57,7 @@ UnityScripts/
 | --- | --- | --- |
 | [`AdvancedGravityGun.cs`](AdvancedGravityGun.cs) | `AdvancedGravityGun` | Grab, hold, rotate, and throw non-kinematic Rigidbodies using a physics controller. |
 | [`DynamicWorldEnvironment.cs`](DynamicWorldEnvironment.cs) | `DynamicWorldEnvironment` | A day/night clock and five smoothly blended weather presets, with optional ambient/fog, WindZone, rain/snow and lightning effects. |
+| [`StealthGuardAI.cs`](StealthGuardAI.cs) | `StealthGuardAI` | NavMesh-based finite-state patrol, vision, noise-driven investigation, chase, and last-known-position search. |
 | [`PlayerController.cs`](PlayerController.cs) | `SimpleFPSController` | CharacterController-based first-person movement, sprinting, jumping, and mouse look. |
 | [`ProceduralMazeGenerator_Unity.cs`](ProceduralMazeGenerator_Unity.cs) | `ProceduralMazeGenerator` | Generate deterministic, connected mazes with solid walls/floors, optional shortest-path visualization, and a completion event. |
 | [`RuntimeBuildingSystem.cs`](RuntimeBuildingSystem.cs) | `RuntimeBuildingSystem` | Place and remove pieces at runtime with previews, snapping, rotation, obstruction checks, and undo/redo. |
@@ -76,6 +79,7 @@ UnityScripts/
 - An appropriately configured Unity scene for most examples: cameras, collision geometry, components, prefabs, Inspector references, and tags are **not** supplied in this repository. The maze generator creates its own geometry; the building system can create three demonstration pieces if no prefabs are assigned.
 - For `PhysicsImpactDeformer`, a mesh with **Read/Write Enabled** (on imported model assets), sufficient vertex density for visible dents, and a Collider for collision-driven use.
 - For `DynamicWorldEnvironment`, a directional Light is needed for visible sunlight; moonlight, lightning, WindZone, and rain/snow ParticleSystems are optional. The script does not generate particle prefabs, cloud geometry, or a skybox.
+- For `StealthGuardAI`, a guard GameObject with a **NavMeshAgent** standing on a **baked NavMesh**, plus an assigned target and optional patrol point Transforms. Depending on Unity version/project setup, install **AI Navigation** via Package Manager for NavMesh baking. The component uses `UnityEngine.AI`; it needs no separate player controller.
 
 ## Installation
 
@@ -252,6 +256,47 @@ The component exposes `TimeOfDayHours`, `Sunlight01`, `IsNight`, `TargetWeather`
 
 **Limitations:** This is a lightweight environmental prototype, not a physically based weather simulator. It does **not** generate clouds, thunder audio, particle assets, skybox transitions, or weather-dependent gameplay physics. Fog and ambient effects use Unity's `RenderSettings`; URP/HDRP volume-based workflows may require adaptation. When the component is disabled, its prior global fog/ambient values are restored by default; Light and WindZone values are not restored.
 
+### 9. Stealth guard AI (\`StealthGuardAI\`)
+
+[Source](StealthGuardAI.cs) — a single-component NPC controller with a five-state finite-state machine and configurable sensory thresholds. It uses Unity's \`NavMeshAgent\` to move rather than directly adjusting transforms.
+
+| State | Behaviour |
+| --- | --- |
+| \`Patrol\` | Walk sequentially between assigned waypoint Transforms |
+| \`Investigate\` | Move toward a reported noise or partially observed target |
+| \`Chase\` | Pursue the target's most recently observed position |
+| \`Search\` | Check randomly sampled, NavMesh-reachable positions around the last known location |
+| \`Return\` | Resume the patrol route after searching |
+
+**Setup**
+
+1. In a Unity 3D scene, create walkable terrain or a floor and **bake a NavMesh**. In projects that use the AI Navigation package, add/configure a \`NavMeshSurface\` and bake it. Verify the guard starts **on** a navigable surface.
+2. Create an enemy GameObject (a Capsule is sufficient), add a **NavMeshAgent**, then attach \`StealthGuardAI.cs\`.
+3. Assign the player's **Transform** to the guard's **Target** field. Give the player a Collider if you want a raycast to confirm that the player is the first hit; the script also allows unobstructed targets without Colliders.
+4. Create several empty GameObjects around the environment and put their Transforms in **Patrol Points**. Leave the array empty to keep the guard stationary until it sees/hears something.
+5. Optionally assign an **Eyes** Transform at head height; otherwise the script offsets the guard's origin using **Eye Height**.
+6. Configure **Sight Range**, **Field Of View**, **Vision Layers**, **Hearing Radius**, **Detection Threshold**, patrol/chase speeds and search durations.
+7. Press **Play**. Use the **Scene** view to see the yellow vision boundary, cyan hearing-radius sphere, and the magenta last-known-position marker when applicable.
+
+**Trigger noise from gameplay**
+
+Add the following call to a footstep, thrown-object, or weapon script; loudness \`1f\` means its normal hearing radius, and \`2f\` doubles it:
+
+\`\`\`csharp
+// Called when a noise should alert nearby guards.
+StealthGuardAI.BroadcastNoise(transform.position, 1f);
+\`\`\`
+
+Or notify a specific guard:
+
+\`\`\`csharp
+guard.HearNoise(impactPoint, 1.5f);
+\`\`\`
+
+Other scripts can call \`SetTarget(Transform)\`, inspect \`CurrentState\`, \`Suspicion01\`, \`CanSeeTarget\` and \`LastKnownPosition\`, or subscribe to the \`StateChanged\` C# event. No player movement or noise is generated automatically.
+
+**Sensor and performance notes:** Sight uses a view angle, maximum distance and a line-of-sight raycast at a configurable interval (\`senseInterval\`, default **0.15 s**). A blocker must be included in \`visionLayers\` to obstruct sight. Noise is a distance-based event and **does not model acoustic occlusion**. Guards are registered in a static list for broadcasts, so sending very frequent noise events to many guards may require optimization. The search system samples positions against the baked NavMesh; it does not build or rebake navigation geometry at runtime.
+
 ### Combining components
 
 These components are independent demos, not a unified input framework. Some default keys overlap: `R` regenerates the maze but rotates a held gravity-gun object; `Q`/`E` control building rotation while `Q` also rotates gravity-gun objects and `E` is gravity-gun pickup. Disable/remap conflicting controls or only enable the relevant component while testing. Both the maze and building system use on-screen IMGUI panels in the top-left, which may overlap if enabled together.
@@ -326,6 +371,7 @@ This repository is suitable for experimentation, but not all scripts are product
 12. **Mesh deformation has geometry and physics constraints.** The source mesh must be readable, low-resolution meshes show coarse dents, and visual deformation does not alter collision geometry unless MeshCollider refresh is explicitly enabled. Frequent recooking is performance-intensive.
 13. **Demo controls may conflict.** The maze, building system, gravity gun, and projectile examples reuse some keys. See [Combining components](#combining-components).
 14. **Weather is not a complete atmosphere simulation.** `DynamicWorldEnvironment` requires supplied particle systems for visible precipitation, and URP/HDRP projects may need pipeline-specific overrides for fog and sky.
+15. **Stealth guard AI requires precomputed navigation.** `StealthGuardAI` cannot navigate without a valid baked NavMesh. Hearing only responds to explicit calls to `HearNoise` or `BroadcastNoise`; sight requires a target reference and sensible physics layer masks. It does not implement attack, animation, cover tactics, or networking.
 
 Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/UnityScripts/issues).
 
@@ -350,6 +396,9 @@ Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/U
 | **Collision shape doesn't match a dent** | Visual changes are separate from physics by default. Add a matching MeshCollider and enable `updateMeshCollider` only if its performance/physics trade-offs are acceptable. |
 | **Weather changes but there is no rain or snow** | Assign real rain/snow ParticleSystems; the component controls emission but does not create particles or materials. |
 | **Day/night lighting doesn't change** | Assign a Directional Light as Sun (or set RenderSettings.sun), and check the active render pipeline's volume/environment lighting configuration. |
+| **Stealth guard doesn't move** | Bake a NavMesh, place the guard on it, ensure its NavMeshAgent is enabled, and assign valid patrol point Transforms. |
+| **Stealth guard sees through walls** | Include obstacle layers in `visionLayers`; vision raycasts ignore objects excluded from that mask. |
+| **Stealth guard never hears footsteps** | Explicitly call `StealthGuardAI.BroadcastNoise(...)` or `HearNoise(...)` from the footstep/impact event; this is not automatic physics audio detection. |
 
 ## Contributing
 
