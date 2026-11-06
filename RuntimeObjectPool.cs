@@ -61,6 +61,8 @@ public sealed class RuntimeObjectPool : MonoBehaviour
 
     private readonly List<GameObject> expired = new List<GameObject>();
     private readonly List<GameObject> scratch = new List<GameObject>();
+    private readonly List<GameObject> externallyDestroyed = new List<GameObject>();
+    private float nextDestroyedScan;
     private Transform staging;
     private bool ready;
 
@@ -149,7 +151,13 @@ public sealed class RuntimeObjectPool : MonoBehaviour
                 break;
 
             // A caller destroyed an inactive object outside this pool.
-            bucket.Created = Mathf.Max(0, bucket.Created - 1);
+            // Unity's destroyed-object reference still works as a dictionary key.
+            if (!ReferenceEquals(instance, null) && owners.Remove(instance))
+            {
+                callbacks.Remove(instance);
+                expiry.Remove(instance);
+                bucket.Created = Mathf.Max(0, bucket.Created - 1);
+            }
         }
 
         if (instance == null)
@@ -195,7 +203,13 @@ public sealed class RuntimeObjectPool : MonoBehaviour
         expiry.Remove(instance);
         InvokeCallbacks(instance, false);
         if (instance == null)
-            return true; // A callback destroyed the object.
+        {
+            // A callback destroyed the object: do not enqueue a dead instance.
+            owners.Remove(instance);
+            callbacks.Remove(instance);
+            bucket.Created = Mathf.Max(0, bucket.Created - 1);
+            return true;
+        }
 
         instance.SetActive(false);
         instance.transform.SetParent(bucket.Storage, false);
@@ -298,6 +312,14 @@ public sealed class RuntimeObjectPool : MonoBehaviour
 
     private void Update()
     {
+        // Detect externally destroyed active objects so they do not consume
+        // permanent capacity or leave stale auto-return entries.
+        if (Time.time >= nextDestroyedScan)
+        {
+            nextDestroyedScan = Time.time + 1f;
+            CollectDestroyedActiveObjects();
+        }
+
         if (expiry.Count == 0)
             return;
 
@@ -317,6 +339,30 @@ public sealed class RuntimeObjectPool : MonoBehaviour
                 Return(instance);
         }
         expired.Clear();
+    }
+
+    private void CollectDestroyedActiveObjects()
+    {
+        externallyDestroyed.Clear();
+        foreach (KeyValuePair<GameObject, Bucket> entry in owners)
+        {
+            if (entry.Key == null && entry.Value.InUse.Contains(entry.Key))
+                externallyDestroyed.Add(entry.Key);
+        }
+
+        foreach (GameObject item in externallyDestroyed)
+        {
+            Bucket bucket;
+            if (owners.TryGetValue(item, out bucket))
+            {
+                bucket.InUse.Remove(item);
+                bucket.Created = Mathf.Max(0, bucket.Created - 1);
+                owners.Remove(item);
+                callbacks.Remove(item);
+                expiry.Remove(item);
+            }
+        }
+        externallyDestroyed.Clear();
     }
 
     private void OnValidate()
