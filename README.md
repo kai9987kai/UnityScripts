@@ -22,6 +22,7 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 - **Procedural mazes:** seeded, fully connected 3D mazes generated at runtime, with colliders, path preview, and completion callbacks.
 - **Runtime construction:** grid snapping, ghost previews, rotation, obstruction checks, placement/removal, and undo/redo.
 - **Impact deformation:** collision dents and scripted impacts on readable meshes, with optional elastic recovery and collider updates.
+- **Time and weather:** configurable day/night cycle, overcast lighting, fog, optional wind and precipitation, and storm lightning.
 - **Projectile game:** two alternative launcher controllers, charge-to-fire aiming, trajectory visualization, target/obstacle spawning, a shot counter, and win/lose state management.
 
 ## Repository contents
@@ -30,6 +31,7 @@ UnityScripts contains example components for first-person movement, Rigidbody in
 UnityScripts/
 ├── AdvancedGravityGun.cs
 ├── Balltoredportal.cs
+├── DynamicWorldEnvironment.cs
 ├── PhysicsImpactDeformer.cs
 ├── PlayerController.cs
 ├── ProceduralMazeGenerator_Unity.cs
@@ -52,6 +54,7 @@ UnityScripts/
 | Script | Component class | Purpose |
 | --- | --- | --- |
 | [`AdvancedGravityGun.cs`](AdvancedGravityGun.cs) | `AdvancedGravityGun` | Grab, hold, rotate, and throw non-kinematic Rigidbodies using a physics controller. |
+| [`DynamicWorldEnvironment.cs`](DynamicWorldEnvironment.cs) | `DynamicWorldEnvironment` | A day/night clock and five smoothly blended weather presets, with optional ambient/fog, WindZone, rain/snow and lightning effects. |
 | [`PlayerController.cs`](PlayerController.cs) | `SimpleFPSController` | CharacterController-based first-person movement, sprinting, jumping, and mouse look. |
 | [`ProceduralMazeGenerator_Unity.cs`](ProceduralMazeGenerator_Unity.cs) | `ProceduralMazeGenerator` | Generate deterministic, connected mazes with solid walls/floors, optional shortest-path visualization, and a completion event. |
 | [`RuntimeBuildingSystem.cs`](RuntimeBuildingSystem.cs) | `RuntimeBuildingSystem` | Place and remove pieces at runtime with previews, snapping, rotation, obstruction checks, and undo/redo. |
@@ -72,6 +75,7 @@ UnityScripts/
 - **TextMeshPro** for `projectileballgame/GameManager.cs` and `LauncherController.cs` (`using TMPro;`). Install it through Package Manager if necessary and import its essential resources when prompted.
 - An appropriately configured Unity scene for most examples: cameras, collision geometry, components, prefabs, Inspector references, and tags are **not** supplied in this repository. The maze generator creates its own geometry; the building system can create three demonstration pieces if no prefabs are assigned.
 - For `PhysicsImpactDeformer`, a mesh with **Read/Write Enabled** (on imported model assets), sufficient vertex density for visible dents, and a Collider for collision-driven use.
+- For `DynamicWorldEnvironment`, a directional Light is needed for visible sunlight; moonlight, lightning, WindZone, and rain/snow ParticleSystems are optional. The script does not generate particle prefabs, cloud geometry, or a skybox.
 
 ## Installation
 
@@ -205,6 +209,49 @@ The public API also exposes `ApplyImpact(worldPosition, inwardWorldDirection, st
 
 By default, the script deforms **only the visual mesh**. `updateMeshCollider` can optionally synchronize a matching MeshCollider at a throttled interval, but collider recooking is expensive and Unity has restrictions on non-convex MeshColliders attached to dynamic Rigidbodies. Use this feature cautiously on static/environment geometry. The source asset is not modified: the component clones the mesh at runtime.
 
+### 8. Dynamic day/night and weather (`DynamicWorldEnvironment`)
+
+[Source](DynamicWorldEnvironment.cs) — a standalone example with a 24-hour clock and five transitionable weather presets: **Clear, Overcast, Rain, Storm, Snow**. It controls directional lights, ambient lighting, fog, wind and optional precipitation emission.
+
+1. Create an empty GameObject named **World Environment** and attach `DynamicWorldEnvironment.cs`.
+2. Add a **Directional Light** to your scene and assign it as **Sun** (or set it as the scene's Render Settings sun). Optionally assign a second directional Light as **Moon**.
+3. Choose **Starting Hour**, **Full Day Minutes**, **Starting Weather**, and **Transition Seconds**. The default is one 24-hour game day every **20 real minutes**.
+4. Press **Play**. The sun moves throughout the day, with simplified sunrise at **06:00**, solar noon at **12:00**, and sunset at **18:00**.
+5. For precipitation, create and configure rain and/or snow **ParticleSystems**, position them in your scene (or follow the player using your own component), and assign them to **Rain Particles** or **Snow Particles**. The script changes particle emission and starts/stops those systems; it does **not** create the particle assets.
+6. Optionally assign a **WindZone** and an extra **Lightning Light**. Storms then animate wind and produce short light flashes at random intervals.
+
+| Keyboard control | Effect |
+| --- | --- |
+| `F6` | Pause/resume the clock |
+| `F7` | Cycle through weather presets |
+| `F8` | Advance one simulated hour |
+
+The keyboard demonstration uses the **legacy Input Manager**. In Input System-only projects, call the public methods instead:
+
+```csharp
+using UnityEngine;
+
+public class WeatherDemo : MonoBehaviour
+{
+    [SerializeField] private DynamicWorldEnvironment environment;
+
+    public void StartStorm()
+    {
+        environment.SetWeather(DynamicWorldEnvironment.WeatherType.Storm);
+        environment.SetTime(22f);
+    }
+
+    public void StopTime()
+    {
+        environment.PauseClock(true);
+    }
+}
+```
+
+The component exposes `TimeOfDayHours`, `Sunlight01`, `IsNight`, `TargetWeather`, `RainIntensity01`, and `SnowIntensity01`, plus the `WeatherChanged` C# event. A weather change event fires when a preset is **requested**, while the actual visual blending occurs over `transitionSeconds`.
+
+**Limitations:** This is a lightweight environmental prototype, not a physically based weather simulator. It does **not** generate clouds, thunder audio, particle assets, skybox transitions, or weather-dependent gameplay physics. Fog and ambient effects use Unity's `RenderSettings`; URP/HDRP volume-based workflows may require adaptation. When the component is disabled, its prior global fog/ambient values are restored by default; Light and WindZone values are not restored.
+
 ### Combining components
 
 These components are independent demos, not a unified input framework. Some default keys overlap: `R` regenerates the maze but rotates a held gravity-gun object; `Q`/`E` control building rotation while `Q` also rotates gravity-gun objects and `E` is gravity-gun pickup. Disable/remap conflicting controls or only enable the relevant component while testing. Both the maze and building system use on-screen IMGUI panels in the top-left, which may overlap if enabled together.
@@ -278,6 +325,7 @@ This repository is suitable for experimentation, but not all scripts are product
 11. **Runtime building does not persist placed pieces.** Undo/redo history and placements are session-only. It requires legacy input; use appropriate layer masks, Colliders, and a camera for reliable placement and removal.
 12. **Mesh deformation has geometry and physics constraints.** The source mesh must be readable, low-resolution meshes show coarse dents, and visual deformation does not alter collision geometry unless MeshCollider refresh is explicitly enabled. Frequent recooking is performance-intensive.
 13. **Demo controls may conflict.** The maze, building system, gravity gun, and projectile examples reuse some keys. See [Combining components](#combining-components).
+14. **Weather is not a complete atmosphere simulation.** `DynamicWorldEnvironment` requires supplied particle systems for visible precipitation, and URP/HDRP projects may need pipeline-specific overrides for fog and sky.
 
 Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/UnityScripts/issues).
 
@@ -300,6 +348,8 @@ Issues and fixes are welcome via [GitHub Issues](https://github.com/kai9987kai/U
 | **Runtime builder input fails** | Enable **Input Manager (Old)** or **Both**; `RuntimeBuildingSystem` uses `UnityEngine.Input`. |
 | **Deformer stays flat or disables itself** | Check **Read/Write Enabled** on an imported mesh, enough mesh subdivisions, collision speed above the threshold, and a non-trigger Collider. |
 | **Collision shape doesn't match a dent** | Visual changes are separate from physics by default. Add a matching MeshCollider and enable `updateMeshCollider` only if its performance/physics trade-offs are acceptable. |
+| **Weather changes but there is no rain or snow** | Assign real rain/snow ParticleSystems; the component controls emission but does not create particles or materials. |
+| **Day/night lighting doesn't change** | Assign a Directional Light as Sun (or set RenderSettings.sun), and check the active render pipeline's volume/environment lighting configuration. |
 
 ## Contributing
 
